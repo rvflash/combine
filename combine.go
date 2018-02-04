@@ -5,21 +5,19 @@
 package combine
 
 import (
+	"errors"
 	"hash/fnv"
 	"io"
 	"io/ioutil"
 	"net"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-
-	"path"
-
-	"github.com/pkg/errors"
 )
 
 // List of available MIME types
@@ -46,6 +44,7 @@ var (
 // An empty Dir is treated as ".".
 type Dir string
 
+// String ...
 func (d Dir) String() string {
 	dir := string(d)
 	if dir == "" {
@@ -95,7 +94,6 @@ type minData struct {
 	sync.Mutex
 }
 
-// min ...
 type min struct {
 	Link string
 	sync.WaitGroup

@@ -17,6 +17,7 @@ type handler struct {
 	err  error
 }
 
+// ServeHTTP ...
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if h.err != nil {
 		// No root to save compressed content.

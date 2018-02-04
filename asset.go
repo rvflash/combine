@@ -7,14 +7,12 @@ package combine
 import (
 	"bytes"
 	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
-
-	"net/url"
-
-	"net/http"
 
 	"github.com/pkg/errors"
 	"github.com/tdewolff/minify"
