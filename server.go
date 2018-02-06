@@ -65,6 +65,10 @@ func split(URLPath string) (mediaType, hash string) {
 	default:
 		return
 	}
-	hash = strings.TrimSuffix(path.Base(URLPath), ext)
+	hash = toHash(hash, ext)
 	return
+}
+
+func toHash(URLPath, ext string) string {
+	return strings.TrimSuffix(path.Base(URLPath), ext)
 }

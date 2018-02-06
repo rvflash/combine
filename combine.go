@@ -56,8 +56,8 @@ func (d Dir) String() string {
 // New ...
 func New(root Dir) *Data {
 	return &Data{
-		raw:  &rawData{src: make(map[uint32]*raw)},
-		min:  &minData{src: make(map[uint32]*min)},
+		raw:  &rawMap{src: make(map[uint32]*raw)},
+		min:  &minMap{src: make(map[uint32]*min)},
 		root: root,
 		http: newHTTPClient(),
 	}
@@ -83,20 +83,15 @@ func newHTTPClient() HTTPGetter {
 
 // Data ...
 type Data struct {
-	raw  *rawData
-	min  *minData
+	raw  *rawMap
+	min  *minMap
 	root Dir
 	http HTTPGetter
 }
 
-type minData struct {
+type minMap struct {
 	src map[uint32]*min
 	sync.Mutex
-}
-
-type min struct {
-	Link string
-	sync.WaitGroup
 }
 
 // NewStatic ...
@@ -104,7 +99,12 @@ func NewStatic() *min {
 	return &min{}
 }
 
-type rawData struct {
+type min struct {
+	Link string
+	sync.WaitGroup
+}
+
+type rawMap struct {
 	src map[uint32]*raw
 	sync.Mutex
 }
@@ -237,10 +237,10 @@ func (d *Data) ToAsset(mediaType, hash string) (a *Asset, err error) {
 		err = ErrMime
 		return
 	}
-	var i uint64
+	// Extracts media keys behind it.
 	var min uint32
-	for k, v := range strings.Split(hash, ".") {
-		i, err = strconv.ParseUint(v, 10, 32)
+	for k, v := range strings.Split(toHash(hash, a.Ext()), ".") {
+		i, err := strconv.ParseUint(v, 10, 32)
 		if err != nil {
 			return
 		}
