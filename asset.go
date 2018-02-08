@@ -30,7 +30,7 @@ func (a *Asset) append(r *raw) error {
 	if err != nil {
 		return err
 	}
-	a.reg.storeRawSrc(id, r)
+	a.reg.storeRaw(id, r)
 	a.media[len(a.media)] = id
 	return nil
 }
@@ -97,7 +97,7 @@ func prepend(one string, more []string) []string {
 func (a *Asset) Combine(w io.Writer) error {
 	m := minify.New()
 	for _, id := range a.media {
-		r, ok := a.reg.loadRawSrc(id)
+		r, ok := a.reg.loadRaw(id)
 		if !ok {
 			return ErrNotFound
 		}

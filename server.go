@@ -44,7 +44,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, d.Link)
 }
 
-func (h *handler) createFile(name string, src *Asset, dst *min) (err error) {
+func (h *handler) createFile(name string, src *Asset, dst *Static) (err error) {
 	defer dst.Done()
 	dst.Add(1)
 	if err = src.CreateFile(name); err != nil {

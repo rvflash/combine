@@ -53,11 +53,19 @@ func (d Dir) String() string {
 	return path.Clean(dir)
 }
 
+// Data ...
+type Data struct {
+	raw  *rawMap
+	min  *minMap
+	root Dir
+	http HTTPGetter
+}
+
 // New ...
 func New(root Dir) *Data {
 	return &Data{
 		raw:  &rawMap{src: make(map[uint32]*raw)},
-		min:  &minMap{src: make(map[uint32]*min)},
+		min:  &minMap{src: make(map[uint32]*Static)},
 		root: root,
 		http: newHTTPClient(),
 	}
@@ -81,25 +89,18 @@ func newHTTPClient() HTTPGetter {
 	}
 }
 
-// Data ...
-type Data struct {
-	raw  *rawMap
-	min  *minMap
-	root Dir
-	http HTTPGetter
-}
-
 type minMap struct {
-	src map[uint32]*min
+	src map[uint32]*Static
 	sync.Mutex
 }
 
 // NewStatic ...
-func NewStatic() *min {
-	return &min{}
+func NewStatic() *Static {
+	return &Static{}
 }
 
-type min struct {
+// Static ...
+type Static struct {
 	Link string
 	sync.WaitGroup
 }
@@ -145,7 +146,7 @@ func (d *raw) readAll() (string, error) {
 	return string(name[:]), nil
 }
 
-func (d *Data) loadRawSrc(key uint32) (value *raw, ok bool) {
+func (d *Data) loadRaw(key uint32) (value *raw, ok bool) {
 	defer d.raw.Unlock()
 	d.raw.Lock()
 	if value, ok = d.raw.src[key]; ok {
@@ -154,7 +155,7 @@ func (d *Data) loadRawSrc(key uint32) (value *raw, ok bool) {
 	return nil, false
 }
 
-func (d *Data) storeRawSrc(key uint32, value *raw) {
+func (d *Data) storeRaw(key uint32, value *raw) {
 	d.raw.Lock()
 	d.raw.src[key] = value
 	d.raw.Unlock()
@@ -178,7 +179,7 @@ func (d *Data) NewJS() *Asset {
 	}
 }
 
-// FileServer implements the http.Handler.
+// FileServer implements the http.handler.
 func (d *Data) FileServer(root Dir) http.Handler {
 	dir := filepath.Join(root.String(), "combine")
 	return &handler{
@@ -198,10 +199,10 @@ func (d *Data) Delete(a *Asset) {
 // Load returns the value stored in the map for a key, or nil if no
 // value is present.
 // The ok result indicates whether value was found in the map.
-func (d *Data) Load(a *Asset) (media *min, ok bool) {
+func (d *Data) Load(key *Asset) (value *Static, ok bool) {
 	defer d.min.Unlock()
 	d.min.Lock()
-	if media, ok = d.min.src[a.ID()]; ok {
+	if value, ok = d.min.src[key.ID()]; ok {
 		return
 	}
 	return nil, false
@@ -210,19 +211,19 @@ func (d *Data) Load(a *Asset) (media *min, ok bool) {
 // LoadOrStore returns the existing value for the key if present.
 // Otherwise, it stores and returns the given value.
 // The loaded result is true if the value was loaded, false if stored.
-func (d *Data) LoadOrStore(a *Asset, media *min) (actual *min, loaded bool) {
-	actual, loaded = d.Load(a)
+func (d *Data) LoadOrStore(key *Asset, value *Static) (actual *Static, loaded bool) {
+	actual, loaded = d.Load(key)
 	if loaded {
 		actual.Wait()
 		return
 	}
-	return media, false
+	return value, false
 }
 
 // Store sets the path for the given identifier.
-func (d *Data) Store(a *Asset, media *min) {
+func (d *Data) Store(key *Asset, value *Static) {
 	d.min.Lock()
-	d.min.src[a.ID()] = media
+	d.min.src[key.ID()] = value
 	d.min.Unlock()
 }
 
@@ -238,10 +239,10 @@ func (d *Data) ToAsset(mediaType, hash string) (a *Asset, err error) {
 		return
 	}
 	// Extracts media keys behind it.
+	var i uint64
 	var min uint32
 	for k, v := range strings.Split(toHash(hash, a.Ext()), ".") {
-		i, err := strconv.ParseUint(v, 10, 32)
-		if err != nil {
+		if i, err = strconv.ParseUint(v, 10, 32); err != nil {
 			return
 		}
 		if k == 0 {
@@ -261,6 +262,7 @@ type HTTPGetter interface {
 	Get(url string) (*http.Response, error)
 }
 
+// UseHTTPClient ...
 func (d *Data) UseHTTPClient(client HTTPGetter) *Data {
 	d.http = client
 	return d
