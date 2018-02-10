@@ -12,7 +12,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -50,24 +49,26 @@ func (d Dir) String() string {
 	if dir == "" {
 		return "."
 	}
-	return path.Clean(dir)
+	return filepath.Clean(dir)
 }
 
 // Data ...
 type Data struct {
-	raw  *rawMap
-	min  *minMap
-	root Dir
-	http HTTPGetter
+	raw          *rawMap
+	min          *minMap
+	root         Dir
+	http         HTTPGetter
+	buildVersion string
 }
 
 // New ...
 func New(root Dir) *Data {
 	return &Data{
-		raw:  &rawMap{src: make(map[uint32]*raw)},
-		min:  &minMap{src: make(map[uint32]*Static)},
-		root: root,
-		http: newHTTPClient(),
+		raw:          &rawMap{src: make(map[uint32]*raw)},
+		min:          &minMap{src: make(map[uint32]*Static)},
+		root:         root,
+		http:         newHTTPClient(),
+		buildVersion: strconv.FormatInt(time.Now().Unix(), 10),
 	}
 }
 
@@ -165,7 +166,7 @@ func (d *Data) storeRaw(key uint32, value *raw) {
 func (d *Data) NewCSS() *Asset {
 	return &Asset{
 		kind:  CSS,
-		media: make(map[int]uint32),
+		media: make([]uint32, 0),
 		reg:   d,
 	}
 }
@@ -174,7 +175,7 @@ func (d *Data) NewCSS() *Asset {
 func (d *Data) NewJS() *Asset {
 	return &Asset{
 		kind:  JavaScript,
-		media: make(map[int]uint32),
+		media: make([]uint32, 0),
 		reg:   d,
 	}
 }
@@ -229,6 +230,13 @@ func (d *Data) Store(key *Asset, value *Static) {
 
 // ToAsset...
 func (d *Data) ToAsset(mediaType, hash string) (a *Asset, err error) {
+	// Checksum
+	keys := strings.Split(toHash(hash, a.Ext()), ".")
+	if len(keys)-1 < 1 {
+		err = ErrUnexpectedEOF
+		return
+	}
+	// Initialization by king of media
 	switch mediaType {
 	case CSS:
 		a = d.NewCSS()
@@ -238,10 +246,12 @@ func (d *Data) ToAsset(mediaType, hash string) (a *Asset, err error) {
 		err = ErrMime
 		return
 	}
+	// Defines the number of media inside
+	a.media = make([]uint32, len(keys)-1)
 	// Extracts media keys behind it.
 	var i uint64
 	var min uint32
-	for k, v := range strings.Split(toHash(hash, a.Ext()), ".") {
+	for k, v := range keys {
 		if i, err = strconv.ParseUint(v, 10, 32); err != nil {
 			return
 		}
@@ -251,10 +261,13 @@ func (d *Data) ToAsset(mediaType, hash string) (a *Asset, err error) {
 		}
 		a.media[k-1] = uint32(i) + min
 	}
-	if len(a.media) == 0 {
-		err = ErrUnexpectedEOF
-	}
 	return
+}
+
+// UseBuildVersion ...
+func (d *Data) UseBuildVersion(value string) *Data {
+	d.buildVersion = value
+	return d
 }
 
 // HTTPGetter represents the mean to get data from HTTP.

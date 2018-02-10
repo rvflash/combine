@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -22,21 +23,14 @@ import (
 type Asset struct {
 	reg   *Data
 	kind  string
-	media map[int]uint32
-}
-
-func (a *Asset) append(r *raw) error {
-	id, err := r.crc()
-	if err != nil {
-		return err
-	}
-	a.reg.storeRaw(id, r)
-	a.media[len(a.media)] = id
-	return nil
+	media []uint32
 }
 
 // Add ...
 func (a *Asset) Add(b []byte) error {
+	if len(b) == 0 {
+		return nil
+	}
 	c := &raw{
 		kind:   inlineSrc,
 		reader: bytes.NewReader(b),
@@ -47,7 +41,11 @@ func (a *Asset) Add(b []byte) error {
 // AddFile ...
 func (a *Asset) AddFile(name string, more ...string) (err error) {
 	for _, name := range prepend(name, more) {
-		name = filepath.Join(a.reg.root.String(), name)
+		file := Dir(name)
+		if file.String() == "." {
+			return ErrUnexpectedEOF
+		}
+		name = filepath.Join(a.reg.root.String(), file.String())
 		if _, err = os.Stat(name); err != nil {
 			return
 		}
@@ -64,6 +62,9 @@ func (a *Asset) AddFile(name string, more ...string) (err error) {
 
 // AddString ...
 func (a *Asset) AddString(s string) error {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
 	c := &raw{
 		kind:   inlineSrc,
 		reader: strings.NewReader(s),
@@ -74,6 +75,9 @@ func (a *Asset) AddString(s string) error {
 // AddURL ...
 func (a *Asset) AddURL(rawURL string, more ...string) error {
 	for _, rawURL := range prepend(rawURL, more) {
+		if strings.TrimSpace(rawURL) == "" {
+			return ErrUnexpectedEOF
+		}
 		u, err := url.Parse(rawURL)
 		if err != nil {
 			return err
@@ -89,6 +93,16 @@ func (a *Asset) AddURL(rawURL string, more ...string) error {
 	return nil
 }
 
+func (a *Asset) append(r *raw) (err error) {
+	var key uint32
+	if key, err = r.crc(); err != nil {
+		return err
+	}
+	a.reg.storeRaw(key, r)
+	a.media = append(a.media, key)
+	return
+}
+
 func prepend(one string, more []string) []string {
 	return append([]string{one}, more...)
 }
@@ -96,8 +110,8 @@ func prepend(one string, more []string) []string {
 // Combine ...
 func (a *Asset) Combine(w io.Writer) error {
 	m := minify.New()
-	for _, id := range a.media {
-		r, ok := a.reg.loadRaw(id)
+	for i := 0; i < len(a.media); i++ {
+		r, ok := a.reg.loadRaw(a.media[i])
 		if !ok {
 			return ErrNotFound
 		}
@@ -138,11 +152,11 @@ func (a *Asset) minifyFile(r *raw, m *minify.M, w io.Writer) error {
 }
 
 func (a *Asset) minifyURL(r *raw, m *minify.M, w io.Writer) error {
-	path, err := r.readAll()
+	name, err := r.readAll()
 	if err != nil {
 		return err
 	}
-	resp, err := a.reg.http.Get(path)
+	resp, err := a.reg.http.Get(name)
 	if err != nil {
 		return err
 	}
@@ -194,21 +208,26 @@ func (a *Asset) ID() uint32 {
 
 // String ...
 func (a *Asset) String() string {
-	var min uint32
-	for _, h := range a.media {
-		if min == 0 || min > h {
-			min = h
-		}
+	if len(a.media) == 0 {
+		return ""
 	}
 	var fUint32 = func(i uint32) string {
 		return strconv.FormatUint(uint64(i), 10)
 	}
+	// Searches the smallest key.
+	var min uint32
+	for _, key := range a.media {
+		if min == 0 || min > key {
+			min = key
+		}
+	}
+	// Builds the hast to identify its asset.
 	var hash string
-	for k, h := range a.media {
-		if k == 0 {
+	for i := 0; i < len(a.media); i++ {
+		if i == 0 {
 			hash = fUint32(min)
 		}
-		hash += "." + fUint32(h-min)
+		hash += "." + fUint32(a.media[i]-min)
 	}
 	return hash
 }
@@ -218,14 +237,17 @@ func (a *Asset) Tag(root string) string {
 	if len(a.media) == 0 {
 		return ""
 	}
-	if root != "" {
-		root = strings.TrimSuffix(root, "/")
-	}
+
+	// Path with root directory, a build version to force browser
+	// to clear its cache and its filename with extension.
+	link := path.Join("/", root, a.reg.buildVersion, a.String()+a.Ext())
+
+	// HTML5 tag with the relative path of the asset.
 	switch a.kind {
 	case JavaScript:
-		return `<script src="` + root + `/` + a.String() + a.Ext() + `"></script>`
+		return `<script src="` + link + `"></script>`
 	case CSS:
-		return `<link rel="stylesheet" href="` + root + `/` + a.String() + a.Ext() + `">`
+		return `<link rel="stylesheet" href="` + link + `">`
 	default:
 		return ""
 	}
