@@ -41,10 +41,10 @@ var (
 
 // Aggregator ...
 type Aggregator interface {
-	Add(b []byte) error
-	AddFile(name string, more ...string) error
-	AddString(s string) error
-	AddURL(rawURL string, more ...string) error
+	Add(buf ...[]byte) error
+	AddFile(name ...string) error
+	AddString(str ...string) error
+	AddURL(url ...string) error
 }
 
 // Combiner ...
@@ -54,15 +54,25 @@ type Combiner interface {
 
 // Stringer ...
 type Stringer interface {
-	Tag(root Dir) string
 	String() string
+}
+
+// StringCombiner ...
+type StringCombiner interface {
+	Combiner
+	Stringer
+}
+
+// Tagger ...
+type Tagger interface {
+	Tag(root Dir) string
 }
 
 // File ...
 type File interface {
 	Aggregator
-	Combiner
-	Stringer
+	Tagger
+	StringCombiner
 }
 
 // Dir defines the current workspace.
@@ -117,16 +127,32 @@ func (b *Box) Open(name string) (http.File, error) {
 	return os.Open(d.Link)
 }
 
-func (b *Box) append(name string, src *asset, dst *Static) (err error) {
+func (b *Box) append(name string, src StringCombiner, dst *Static) (err error) {
 	defer dst.Done()
 	dst.Add(1)
-	if err = src.create(name); err != nil {
-		b.Delete(src)
-		return
+
+	createFile := func(a StringCombiner, name string) error {
+		f, err := os.Create(name)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = f.Close() }()
+
+		return a.Combine(f)
 	}
-	dst.Link = name
+	if err = createFile(src, name); err != nil {
+		b.Delete(src)
+	} else {
+		dst.Link = name
+	}
 	return
 }
+
+/*
+func (a *asset) create(name string) error {
+
+}
+*/
 
 func split(name string) (mediaType, hash string) {
 	ext := path.Ext(name)
@@ -147,19 +173,19 @@ func toHash(name, ext string) string {
 }
 
 // NewCSS ...
-func (b *Box) NewCSS() *asset {
+func (b *Box) NewCSS() File {
 	a, _, _ := b.newAsset(CSS)
 	return a
 }
 
 // NewJS ...
-func (b *Box) NewJS() *asset {
+func (b *Box) NewJS() File {
 	a, _, _ := b.newAsset(JavaScript)
 	return a
 }
 
 // ToAsset...
-func (b *Box) ToAsset(mediaType, hash string) (*asset, error) {
+func (b *Box) ToAsset(mediaType, hash string) (File, error) {
 	// Initialization by king of media
 	a, ext, err := b.newAsset(mediaType)
 	if err != nil {
@@ -250,27 +276,27 @@ type Static struct {
 }
 
 // Delete deletes the value for a key.
-func (d *Box) Delete(key Stringer) {
+func (b *Box) Delete(key Stringer) {
 	id, err := crc32([]byte(key.String()))
 	if err != nil {
 		return
 	}
-	d.min.Lock()
-	delete(d.min.src, id)
-	d.min.Unlock()
+	b.min.Lock()
+	delete(b.min.src, id)
+	b.min.Unlock()
 }
 
 // Load returns the value stored in the map for a key, or nil if no
 // value is present.
 // The ok result indicates whether value was found in the map.
-func (d *Box) Load(key Stringer) (value *Static, ok bool) {
+func (b *Box) Load(key Stringer) (value *Static, ok bool) {
 	id, err := crc32([]byte(key.String()))
 	if err != nil {
 		return
 	}
-	defer d.min.Unlock()
-	d.min.Lock()
-	if value, ok = d.min.src[id]; ok {
+	defer b.min.Unlock()
+	b.min.Lock()
+	if value, ok = b.min.src[id]; ok {
 		return
 	}
 	return nil, false
@@ -279,8 +305,8 @@ func (d *Box) Load(key Stringer) (value *Static, ok bool) {
 // LoadOrStore returns the existing value for the key if present.
 // Otherwise, it stores and returns the given value.
 // The loaded result is true if the value was loaded, false if stored.
-func (d *Box) LoadOrStore(key Stringer, value *Static) (actual *Static, loaded bool) {
-	actual, loaded = d.Load(key)
+func (b *Box) LoadOrStore(key Stringer, value *Static) (actual *Static, loaded bool) {
+	actual, loaded = b.Load(key)
 	if loaded {
 		actual.Wait()
 		return
@@ -289,14 +315,14 @@ func (d *Box) LoadOrStore(key Stringer, value *Static) (actual *Static, loaded b
 }
 
 // Store sets the path for the given identifier.
-func (d *Box) Store(key Stringer, value *Static) {
+func (b *Box) Store(key Stringer, value *Static) {
 	id, err := crc32([]byte(key.String()))
 	if err != nil {
 		return
 	}
-	d.min.Lock()
-	d.min.src[id] = value
-	d.min.Unlock()
+	b.min.Lock()
+	b.min.src[id] = value
+	b.min.Unlock()
 }
 
 type minMap struct {
@@ -309,19 +335,19 @@ type rawMap struct {
 	sync.Mutex
 }
 
-func (d *Box) loadRaw(key uint32) (value *raw, ok bool) {
-	defer d.raw.Unlock()
-	d.raw.Lock()
-	if value, ok = d.raw.src[key]; ok {
+func (b *Box) loadRaw(key uint32) (value *raw, ok bool) {
+	defer b.raw.Unlock()
+	b.raw.Lock()
+	if value, ok = b.raw.src[key]; ok {
 		return
 	}
 	return nil, false
 }
 
-func (d *Box) storeRaw(key uint32, value *raw) {
-	d.raw.Lock()
-	d.raw.src[key] = value
-	d.raw.Unlock()
+func (b *Box) storeRaw(key uint32, value *raw) {
+	b.raw.Lock()
+	b.raw.src[key] = value
+	b.raw.Unlock()
 }
 
 // List of content type

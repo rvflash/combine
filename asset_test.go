@@ -99,15 +99,15 @@ func TestAsset_AddURL(t *testing.T) {
 func TestAsset_Combine(t *testing.T) {
 	// Creates the registry
 	c := combine.New("./example/src", "")
-	css := c.NewJS()
-	exp := []byte(".rv{color:#333;}")
-	if err := css.Add(exp); err != nil {
+	css := c.NewCSS()
+	if err := css.Add([]byte(".rv{color:#333;}")); err != nil {
 		t.Fatalf("unexpected error: %s", err)
 	}
 	w := &bytes.Buffer{}
 	if err := css.Combine(w); err != nil {
 		t.Fatalf("unexpected error: %s", err)
 	}
+	exp := []byte(".rv{color:#333}")
 	if got := w.Bytes(); !bytes.Equal(got, exp) {
 		t.Fatalf("content mismatch: got=%q, exp=%q", got, exp)
 	}

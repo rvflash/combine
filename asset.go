@@ -28,17 +28,22 @@ type asset struct {
 }
 
 // Add ...
-func (a *asset) Add(b []byte) error {
-	if len(b) == 0 {
-		return nil
+func (a *asset) Add(buf ...[]byte) (err error) {
+	for _, buf := range buf {
+		if len(buf) == 0 {
+			continue
+		}
+		c := &raw{kind: inlineSrc, buf: buf}
+		if err = a.append(c); err != nil {
+			return
+		}
 	}
-	c := &raw{kind: inlineSrc, buf: b}
-	return a.append(c)
+	return
 }
 
 // AddFile ...
-func (a *asset) AddFile(name string, more ...string) (err error) {
-	for _, name := range prepend(name, more) {
+func (a *asset) AddFile(name ...string) (err error) {
+	for _, name := range name {
 		file := Dir(name)
 		if file.String() == "." {
 			return ErrUnexpectedEOF
@@ -56,17 +61,22 @@ func (a *asset) AddFile(name string, more ...string) (err error) {
 }
 
 // AddString ...
-func (a *asset) AddString(s string) error {
-	if s = strings.TrimSpace(s); s == "" {
-		return nil
+func (a *asset) AddString(s ...string) (err error) {
+	for _, s := range s {
+		if s = strings.TrimSpace(s); s == "" {
+			continue
+		}
+		c := &raw{kind: inlineSrc, buf: []byte(s)}
+		if err = a.append(c); err != nil {
+			return
+		}
 	}
-	c := &raw{kind: inlineSrc, buf: []byte(s)}
-	return a.append(c)
+	return
 }
 
 // AddURL ...
-func (a *asset) AddURL(rawURL string, more ...string) error {
-	for _, rawURL := range prepend(rawURL, more) {
+func (a *asset) AddURL(rawURL ...string) error {
+	for _, rawURL := range rawURL {
 		if rawURL = strings.TrimSpace(rawURL); rawURL == "" {
 			return ErrUnexpectedEOF
 		}
@@ -82,10 +92,6 @@ func (a *asset) AddURL(rawURL string, more ...string) error {
 	return nil
 }
 
-func prepend(one string, more []string) []string {
-	return append([]string{one}, more...)
-}
-
 func (a *asset) append(r *raw) (err error) {
 	var key uint32
 	if key, err = r.crc(); err != nil {
@@ -94,16 +100,6 @@ func (a *asset) append(r *raw) (err error) {
 	a.reg.storeRaw(key, r)
 	a.media = append(a.media, key)
 	return
-}
-
-func (a *asset) create(name string) error {
-	f, err := os.Create(name)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = f.Close() }()
-
-	return a.Combine(f)
 }
 
 // Combine ...
