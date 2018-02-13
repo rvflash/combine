@@ -8,10 +8,10 @@ import (
 	"errors"
 	"hash/fnv"
 	"io"
-	"io/ioutil"
 	"net"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -39,6 +39,32 @@ var (
 	ErrNotFound = errors.New("not found")
 )
 
+// Aggregator ...
+type Aggregator interface {
+	Add(b []byte) error
+	AddFile(name string, more ...string) error
+	AddString(s string) error
+	AddURL(rawURL string, more ...string) error
+}
+
+// Combiner ...
+type Combiner interface {
+	Combine(w io.Writer) error
+}
+
+// Stringer ...
+type Stringer interface {
+	Tag(root Dir) string
+	String() string
+}
+
+// File ...
+type File interface {
+	Aggregator
+	Combiner
+	Stringer
+}
+
 // Dir defines the current workspace.
 // An empty Dir is treated as ".".
 type Dir string
@@ -52,24 +78,151 @@ func (d Dir) String() string {
 	return filepath.Clean(dir)
 }
 
-// Data ...
-type Data struct {
+// Box ...
+type Box struct {
 	raw          *rawMap
 	min          *minMap
-	root         Dir
+	src, dst     Dir
 	http         HTTPGetter
 	buildVersion string
 }
 
 // New ...
-func New(root Dir) *Data {
-	return &Data{
+func New(src, dst Dir) *Box {
+	return &Box{
 		raw:          &rawMap{src: make(map[uint32]*raw)},
 		min:          &minMap{src: make(map[uint32]*Static)},
-		root:         root,
+		src:          src,
+		dst:          dst,
 		http:         newHTTPClient(),
 		buildVersion: strconv.FormatInt(time.Now().Unix(), 10),
 	}
+}
+
+// Open implements the http.FileSystem.
+func (b *Box) Open(name string) (http.File, error) {
+	a, err := b.ToAsset(split(name))
+	if err != nil {
+		return nil, os.ErrNotExist
+	}
+	d, found := b.LoadOrStore(a, &Static{})
+	if found {
+		return os.Open(d.Link)
+	}
+	// Create a local static version of the asset.
+	err = b.append(filepath.Join(b.dst.String(), a.String()), a, d)
+	if err != nil {
+		return nil, os.ErrPermission
+	}
+	return os.Open(d.Link)
+}
+
+func (b *Box) append(name string, src *asset, dst *Static) (err error) {
+	defer dst.Done()
+	dst.Add(1)
+	if err = src.create(name); err != nil {
+		b.Delete(src)
+		return
+	}
+	dst.Link = name
+	return
+}
+
+func split(name string) (mediaType, hash string) {
+	ext := path.Ext(name)
+	switch ext {
+	case ".js":
+		mediaType = CSS
+	case ".css":
+		mediaType = JavaScript
+	default:
+		return
+	}
+	hash = toHash(hash, ext)
+	return
+}
+
+func toHash(name, ext string) string {
+	return strings.TrimSuffix(path.Base(name), ext)
+}
+
+// NewCSS ...
+func (b *Box) NewCSS() *asset {
+	a, _, _ := b.newAsset(CSS)
+	return a
+}
+
+// NewJS ...
+func (b *Box) NewJS() *asset {
+	a, _, _ := b.newAsset(JavaScript)
+	return a
+}
+
+// ToAsset...
+func (b *Box) ToAsset(mediaType, hash string) (*asset, error) {
+	// Initialization by king of media
+	a, ext, err := b.newAsset(mediaType)
+	if err != nil {
+		return nil, err
+	}
+	// Checksum
+	keys := strings.Split(toHash(hash, ext), ".")
+	if len(keys)-1 < 1 {
+		return nil, ErrUnexpectedEOF
+	}
+	// Defines the number of media inside
+	a.media = make([]uint32, len(keys)-1)
+	// Extracts media keys behind it.
+	var i uint64
+	var min uint32
+	for k, v := range keys {
+		if i, err = strconv.ParseUint(v, 10, 32); err != nil {
+			return nil, err
+		}
+		if k == 0 {
+			min = uint32(i)
+			continue
+		}
+		a.media[k-1] = uint32(i) + min
+	}
+	return a, nil
+}
+
+func (b *Box) newAsset(mediaType string) (a *asset, ext string, err error) {
+	switch mediaType {
+	case CSS:
+		ext = ".js"
+	case JavaScript:
+		ext = ".css"
+	default:
+		err = ErrMime
+	}
+	if err != nil {
+		return
+	}
+	a = &asset{
+		kind:  mediaType,
+		media: make([]uint32, 0),
+		reg:   b,
+	}
+	return
+}
+
+// UseBuildVersion ...
+func (b *Box) UseBuildVersion(value string) *Box {
+	b.buildVersion = value
+	return b
+}
+
+// HTTPGetter represents the mean to get data from HTTP.
+type HTTPGetter interface {
+	Get(url string) (*http.Response, error)
+}
+
+// UseHTTPClient ...
+func (b *Box) UseHTTPClient(client HTTPGetter) *Box {
+	b.http = client
+	return b
 }
 
 func newHTTPClient() HTTPGetter {
@@ -90,25 +243,85 @@ func newHTTPClient() HTTPGetter {
 	}
 }
 
-type minMap struct {
-	src map[uint32]*Static
-	sync.Mutex
-}
-
-// NewStatic ...
-func NewStatic() *Static {
-	return &Static{}
-}
-
 // Static ...
 type Static struct {
 	Link string
 	sync.WaitGroup
 }
 
+// Delete deletes the value for a key.
+func (d *Box) Delete(key Stringer) {
+	id, err := crc32([]byte(key.String()))
+	if err != nil {
+		return
+	}
+	d.min.Lock()
+	delete(d.min.src, id)
+	d.min.Unlock()
+}
+
+// Load returns the value stored in the map for a key, or nil if no
+// value is present.
+// The ok result indicates whether value was found in the map.
+func (d *Box) Load(key Stringer) (value *Static, ok bool) {
+	id, err := crc32([]byte(key.String()))
+	if err != nil {
+		return
+	}
+	defer d.min.Unlock()
+	d.min.Lock()
+	if value, ok = d.min.src[id]; ok {
+		return
+	}
+	return nil, false
+}
+
+// LoadOrStore returns the existing value for the key if present.
+// Otherwise, it stores and returns the given value.
+// The loaded result is true if the value was loaded, false if stored.
+func (d *Box) LoadOrStore(key Stringer, value *Static) (actual *Static, loaded bool) {
+	actual, loaded = d.Load(key)
+	if loaded {
+		actual.Wait()
+		return
+	}
+	return value, false
+}
+
+// Store sets the path for the given identifier.
+func (d *Box) Store(key Stringer, value *Static) {
+	id, err := crc32([]byte(key.String()))
+	if err != nil {
+		return
+	}
+	d.min.Lock()
+	d.min.src[id] = value
+	d.min.Unlock()
+}
+
+type minMap struct {
+	src map[uint32]*Static
+	sync.Mutex
+}
+
 type rawMap struct {
 	src map[uint32]*raw
 	sync.Mutex
+}
+
+func (d *Box) loadRaw(key uint32) (value *raw, ok bool) {
+	defer d.raw.Unlock()
+	d.raw.Lock()
+	if value, ok = d.raw.src[key]; ok {
+		return
+	}
+	return nil, false
+}
+
+func (d *Box) storeRaw(key uint32, value *raw) {
+	d.raw.Lock()
+	d.raw.src[key] = value
+	d.raw.Unlock()
 }
 
 // List of content type
@@ -119,16 +332,12 @@ const (
 )
 
 type raw struct {
-	kind   int
-	reader io.Reader
+	kind int
+	buf  []byte
 }
 
 func (d *raw) crc() (uint32, error) {
-	buf, err := ioutil.ReadAll(d.reader)
-	if err != nil {
-		return 0, err
-	}
-	return crc32(buf)
+	return crc32(d.buf)
 }
 
 func crc32(buf []byte) (uint32, error) {
@@ -139,144 +348,6 @@ func crc32(buf []byte) (uint32, error) {
 	return h.Sum32(), nil
 }
 
-func (d *raw) readAll() (string, error) {
-	name, err := ioutil.ReadAll(d.reader)
-	if err != nil {
-		return "", err
-	}
-	return string(name[:]), nil
-}
-
-func (d *Data) loadRaw(key uint32) (value *raw, ok bool) {
-	defer d.raw.Unlock()
-	d.raw.Lock()
-	if value, ok = d.raw.src[key]; ok {
-		return
-	}
-	return nil, false
-}
-
-func (d *Data) storeRaw(key uint32, value *raw) {
-	d.raw.Lock()
-	d.raw.src[key] = value
-	d.raw.Unlock()
-}
-
-// NewCSS ...
-func (d *Data) NewCSS() *Asset {
-	return &Asset{
-		kind:  CSS,
-		media: make([]uint32, 0),
-		reg:   d,
-	}
-}
-
-// NewJS ...
-func (d *Data) NewJS() *Asset {
-	return &Asset{
-		kind:  JavaScript,
-		media: make([]uint32, 0),
-		reg:   d,
-	}
-}
-
-// FileServer implements the http.handler.
-func (d *Data) FileServer(root Dir) http.Handler {
-	dir := filepath.Join(root.String(), "combine")
-	return &handler{
-		reg:  d,
-		root: dir,
-		err:  os.MkdirAll(dir, os.ModePerm),
-	}
-}
-
-// Delete deletes the value for a key.
-func (d *Data) Delete(a *Asset) {
-	d.min.Lock()
-	delete(d.min.src, a.ID())
-	d.min.Unlock()
-}
-
-// Load returns the value stored in the map for a key, or nil if no
-// value is present.
-// The ok result indicates whether value was found in the map.
-func (d *Data) Load(key *Asset) (value *Static, ok bool) {
-	defer d.min.Unlock()
-	d.min.Lock()
-	if value, ok = d.min.src[key.ID()]; ok {
-		return
-	}
-	return nil, false
-}
-
-// LoadOrStore returns the existing value for the key if present.
-// Otherwise, it stores and returns the given value.
-// The loaded result is true if the value was loaded, false if stored.
-func (d *Data) LoadOrStore(key *Asset, value *Static) (actual *Static, loaded bool) {
-	actual, loaded = d.Load(key)
-	if loaded {
-		actual.Wait()
-		return
-	}
-	return value, false
-}
-
-// Store sets the path for the given identifier.
-func (d *Data) Store(key *Asset, value *Static) {
-	d.min.Lock()
-	d.min.src[key.ID()] = value
-	d.min.Unlock()
-}
-
-// ToAsset...
-func (d *Data) ToAsset(mediaType, hash string) (a *Asset, err error) {
-	// Checksum
-	keys := strings.Split(toHash(hash, a.Ext()), ".")
-	if len(keys)-1 < 1 {
-		err = ErrUnexpectedEOF
-		return
-	}
-	// Initialization by king of media
-	switch mediaType {
-	case CSS:
-		a = d.NewCSS()
-	case JavaScript:
-		a = d.NewJS()
-	default:
-		err = ErrMime
-		return
-	}
-	// Defines the number of media inside
-	a.media = make([]uint32, len(keys)-1)
-	// Extracts media keys behind it.
-	var i uint64
-	var min uint32
-	for k, v := range keys {
-		if i, err = strconv.ParseUint(v, 10, 32); err != nil {
-			return
-		}
-		if k == 0 {
-			min = uint32(i)
-			continue
-		}
-		a.media[k-1] = uint32(i) + min
-	}
-	return
-}
-
-// UseBuildVersion ...
-func (d *Data) UseBuildVersion(value string) *Data {
-	d.buildVersion = value
-	return d
-}
-
-// HTTPGetter represents the mean to get data from HTTP.
-type HTTPGetter interface {
-	Get(url string) (*http.Response, error)
-}
-
-// UseHTTPClient ...
-func (d *Data) UseHTTPClient(client HTTPGetter) *Data {
-	d.http = client
-	return d
+func (d *raw) String() string {
+	return string(d.buf[:])
 }

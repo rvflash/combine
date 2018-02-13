@@ -17,42 +17,37 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/tdewolff/minify"
+	"github.com/tdewolff/minify/css"
+	"github.com/tdewolff/minify/js"
 )
 
-// Asset ...
-type Asset struct {
-	reg   *Data
+type asset struct {
+	reg   *Box
 	kind  string
 	media []uint32
 }
 
 // Add ...
-func (a *Asset) Add(b []byte) error {
+func (a *asset) Add(b []byte) error {
 	if len(b) == 0 {
 		return nil
 	}
-	c := &raw{
-		kind:   inlineSrc,
-		reader: bytes.NewReader(b),
-	}
+	c := &raw{kind: inlineSrc, buf: b}
 	return a.append(c)
 }
 
 // AddFile ...
-func (a *Asset) AddFile(name string, more ...string) (err error) {
+func (a *asset) AddFile(name string, more ...string) (err error) {
 	for _, name := range prepend(name, more) {
 		file := Dir(name)
 		if file.String() == "." {
 			return ErrUnexpectedEOF
 		}
-		name = filepath.Join(a.reg.root.String(), file.String())
+		name = filepath.Join(a.reg.src.String(), file.String())
 		if _, err = os.Stat(name); err != nil {
 			return
 		}
-		c := &raw{
-			kind:   fileSrc,
-			reader: strings.NewReader(name),
-		}
+		c := &raw{kind: fileSrc, buf: []byte(name)}
 		if err = a.append(c); err != nil {
 			return
 		}
@@ -61,31 +56,25 @@ func (a *Asset) AddFile(name string, more ...string) (err error) {
 }
 
 // AddString ...
-func (a *Asset) AddString(s string) error {
-	if strings.TrimSpace(s) == "" {
+func (a *asset) AddString(s string) error {
+	if s = strings.TrimSpace(s); s == "" {
 		return nil
 	}
-	c := &raw{
-		kind:   inlineSrc,
-		reader: strings.NewReader(s),
-	}
+	c := &raw{kind: inlineSrc, buf: []byte(s)}
 	return a.append(c)
 }
 
 // AddURL ...
-func (a *Asset) AddURL(rawURL string, more ...string) error {
+func (a *asset) AddURL(rawURL string, more ...string) error {
 	for _, rawURL := range prepend(rawURL, more) {
-		if strings.TrimSpace(rawURL) == "" {
+		if rawURL = strings.TrimSpace(rawURL); rawURL == "" {
 			return ErrUnexpectedEOF
 		}
 		u, err := url.Parse(rawURL)
 		if err != nil {
 			return err
 		}
-		c := &raw{
-			kind:   onlineSrc,
-			reader: strings.NewReader(u.String()),
-		}
+		c := &raw{kind: onlineSrc, buf: []byte(u.String())}
 		if err = a.append(c); err != nil {
 			return err
 		}
@@ -93,7 +82,11 @@ func (a *Asset) AddURL(rawURL string, more ...string) error {
 	return nil
 }
 
-func (a *Asset) append(r *raw) (err error) {
+func prepend(one string, more []string) []string {
+	return append([]string{one}, more...)
+}
+
+func (a *asset) append(r *raw) (err error) {
 	var key uint32
 	if key, err = r.crc(); err != nil {
 		return err
@@ -103,13 +96,22 @@ func (a *Asset) append(r *raw) (err error) {
 	return
 }
 
-func prepend(one string, more []string) []string {
-	return append([]string{one}, more...)
+func (a *asset) create(name string) error {
+	f, err := os.Create(name)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+
+	return a.Combine(f)
 }
 
 // Combine ...
-func (a *Asset) Combine(w io.Writer) error {
-	m := minify.New()
+func (a *asset) Combine(w io.Writer) error {
+	m, err := newMinify(a.kind)
+	if err != nil {
+		return err
+	}
 	for i := 0; i < len(a.media); i++ {
 		r, ok := a.reg.loadRaw(a.media[i])
 		if !ok {
@@ -133,30 +135,34 @@ func (a *Asset) Combine(w io.Writer) error {
 	return nil
 }
 
-func (a *Asset) minify(r *raw, m *minify.M, w io.Writer) error {
-	return m.Minify(a.kind, w, r.reader)
+func newMinify(mimeType string) (m *minify.M, err error) {
+	m = minify.New()
+	switch mimeType {
+	case JavaScript:
+		m.AddFunc(mimeType, js.Minify)
+	case CSS:
+		m.AddFunc(mimeType, css.Minify)
+	default:
+		err = ErrMime
+	}
+	return
 }
 
-func (a *Asset) minifyFile(r *raw, m *minify.M, w io.Writer) error {
-	name, err := r.readAll()
-	if err != nil {
-		return err
-	}
-	file, err := os.Open(name)
+func (a *asset) minify(r *raw, m *minify.M, w io.Writer) error {
+	return m.Minify(a.kind, w, bytes.NewReader(r.buf))
+}
+
+func (a *asset) minifyFile(r *raw, m *minify.M, w io.Writer) error {
+	file, err := os.Open(r.String())
 	if err != nil {
 		return err
 	}
 	defer func() { _ = file.Close() }()
-
 	return m.Minify(a.kind, w, file)
 }
 
-func (a *Asset) minifyURL(r *raw, m *minify.M, w io.Writer) error {
-	name, err := r.readAll()
-	if err != nil {
-		return err
-	}
-	resp, err := a.reg.http.Get(name)
+func (a *asset) minifyURL(r *raw, m *minify.M, w io.Writer) error {
+	resp, err := a.reg.http.Get(r.String())
 	if err != nil {
 		return err
 	}
@@ -168,46 +174,8 @@ func (a *Asset) minifyURL(r *raw, m *minify.M, w io.Writer) error {
 	return m.Minify(a.kind, w, resp.Body)
 }
 
-// CreateFile ...
-func (a *Asset) CreateFile(name string) (err error) {
-	f, err := os.Create(name)
-	if err != nil {
-		return
-	}
-	defer func() { _ = f.Close() }()
-
-	return a.Combine(f)
-}
-
-// Ext ...
-func (a *Asset) Ext() string {
-	switch a.kind {
-	case JavaScript:
-		return ".js"
-	case CSS:
-		return ".css"
-	default:
-		return ""
-	}
-}
-
-// ID ...
-func (a *Asset) ID() uint32 {
-	buf := []byte(a.String())
-	if len(buf) == 0 {
-		// No content.
-		return 0
-	}
-	id, err := crc32(buf)
-	if err != nil {
-		// Really ?
-		return 0
-	}
-	return id
-}
-
 // String ...
-func (a *Asset) String() string {
+func (a *asset) String() string {
 	if len(a.media) == 0 {
 		return ""
 	}
@@ -233,22 +201,18 @@ func (a *Asset) String() string {
 }
 
 // Tag ...
-func (a *Asset) Tag(root string) string {
-	if len(a.media) == 0 {
+func (a *asset) Tag(root Dir) string {
+	var name string
+	if name = a.String(); name == "" {
 		return ""
 	}
-
-	// Path with root directory, a build version to force browser
-	// to clear its cache and its filename with extension.
-	link := path.Join("/", root, a.reg.buildVersion, a.String()+a.Ext())
+	// Path with src directory, a build version to force browser
+	// to clear its cache, its filename and extension.
+	link := path.Join("/", root.String(), a.reg.buildVersion, name)
 
 	// HTML5 tag with the relative path of the asset.
-	switch a.kind {
-	case JavaScript:
-		return `<script src="` + link + `"></script>`
-	case CSS:
-		return `<link rel="stylesheet" href="` + link + `">`
-	default:
-		return ""
+	if a.kind == JavaScript {
+		return `<script src="` + link + `.js"></script>`
 	}
+	return `<link rel="stylesheet" href="` + link + `.css">`
 }

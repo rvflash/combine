@@ -5,11 +5,8 @@
 package combine_test
 
 import (
+	"bytes"
 	"errors"
-	"io"
-	"net/http"
-	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/rvflash/combine"
@@ -17,7 +14,7 @@ import (
 
 func TestAsset_Add(t *testing.T) {
 	// Creates the registry
-	c := combine.New("")
+	c := combine.New("", "")
 	// Create an asset (any type)
 	js := c.NewJS()
 	var dt = []struct {
@@ -36,28 +33,17 @@ func TestAsset_Add(t *testing.T) {
 
 func TestAsset_AddFile(t *testing.T) {
 	// Creates the registry
-	c := combine.New("./example/src")
+	c := combine.New("./example/src", "")
 	// Create an asset
 	js := c.NewJS()
 	var dt = []struct {
 		in  string
 		err error
 	}{
-		{
-			in: "f1.js",
-		},
-		{
-			in:  "f33.js",
-			err: errors.New(`stat example/src/f33.js: no such file or directory`),
-		},
-		{
-			in:  ".",
-			err: combine.ErrUnexpectedEOF,
-		},
-		{
-			in:  "",
-			err: combine.ErrUnexpectedEOF,
-		},
+		{in: "f1.js"},
+		{in: "f33.js", err: errors.New(`stat example/src/f33.js: no such file or directory`)},
+		{in: ".", err: combine.ErrUnexpectedEOF},
+		{in: "", err: combine.ErrUnexpectedEOF},
 	}
 	for i, tt := range dt {
 		if err := js.AddFile(tt.in); err != nil {
@@ -70,7 +56,7 @@ func TestAsset_AddFile(t *testing.T) {
 
 func TestAsset_AddString(t *testing.T) {
 	// Creates the registry
-	c := combine.New("")
+	c := combine.New("", "")
 	// Create an asset (any type)
 	css := c.NewCSS()
 	var dt = []struct {
@@ -89,27 +75,17 @@ func TestAsset_AddString(t *testing.T) {
 
 func TestAsset_AddURL(t *testing.T) {
 	// Creates the registry
-	c := combine.New("")
+	c := combine.New("", "")
 	// Create an asset (any type).
 	css := c.NewCSS()
 	var dt = []struct {
 		in  string
 		err error
 	}{
-		{
-			in: "http://rv.com/f1.css",
-		},
-		{
-			in: "rv.com/f1.css",
-		},
-		{
-			in:  ":",
-			err: errors.New(`parse :: missing protocol scheme`),
-		},
-		{
-			in:  "",
-			err: combine.ErrUnexpectedEOF,
-		},
+		{in: "http://rv.com/f1.css"},
+		{in: "rv.com/f1.css"},
+		{in: ":", err: errors.New(`parse :: missing protocol scheme`)},
+		{in: "", err: combine.ErrUnexpectedEOF},
 	}
 	for i, tt := range dt {
 		if err := css.AddURL(tt.in); err != nil {
@@ -120,48 +96,48 @@ func TestAsset_AddURL(t *testing.T) {
 	}
 }
 
-func TestAsset_Ext(t *testing.T) {
+func TestAsset_Combine(t *testing.T) {
 	// Creates the registry
-	c := combine.New("")
-	var dt = []struct {
-		in  *combine.Asset
-		out string
-	}{
-		{in: c.NewCSS(), out: ".css"},
-		{in: c.NewJS(), out: ".js"},
-		{in: &combine.Asset{}},
+	c := combine.New("./example/src", "")
+	css := c.NewJS()
+	exp := []byte(".rv{color:#333;}")
+	if err := css.Add(exp); err != nil {
+		t.Fatalf("unexpected error: %s", err)
 	}
-	for i, tt := range dt {
-		if out := tt.in.Ext(); out != tt.out {
-			t.Fatalf("%d. extension mismatch: got=%q, exp=%q", i, out, tt.out)
-		}
+	w := &bytes.Buffer{}
+	if err := css.Combine(w); err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+	if got := w.Bytes(); !bytes.Equal(got, exp) {
+		t.Fatalf("content mismatch: got=%q, exp=%q", got, exp)
 	}
 }
 
-var errNoTransport = errors.New("no transport")
+func TestAsset_Tag(t *testing.T) {
+	// Creates the registry
+	c := combine.New("", "")
+	// Disables the build version to avoid variance.
+	c.UseBuildVersion("")
 
-// Builds a fake http client by mocking main methods.
-type fakeHTTPClient struct{}
-
-// Get mocks the method of same name of the http package.
-func (c *fakeHTTPClient) Get(url string) (*http.Response, error) {
-	if !strings.HasPrefix(url, "http") {
-		return nil, errNoTransport
+	js := c.NewJS()
+	if err := js.AddString("var a = 56;"); err != nil {
+		t.Fatalf("unexpected error: %s", err)
 	}
-	// Mocks responses base on the URL.
-	urlHandler := func(w http.ResponseWriter, r *http.Request) {
-		p := r.URL.Path
-		if p == "" {
-			p = "/"
-		}
-		switch p {
-		default:
-			w.WriteHeader(http.StatusNotFound)
-			_, _ = io.WriteString(w, `{"success":false,"error":404,"message":"Not Found"}`)
+	css := c.NewCSS()
+	if err := css.AddString(".black{color:#000;}"); err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+	var dt = []struct {
+		in  combine.File
+		out string
+	}{
+		{in: c.NewCSS()},
+		{in: js, out: `<script src="/2925958264.0.js"></script>`},
+		{in: css, out: `<link rel="stylesheet" href="/3236089261.0.css">`},
+	}
+	for i, tt := range dt {
+		if out := tt.in.Tag(""); out != tt.out {
+			t.Fatalf("%d. extension mismatch: got=%q, exp=%q", i, out, tt.out)
 		}
 	}
-	req := httptest.NewRequest("GET", url, nil)
-	w := httptest.NewRecorder()
-	urlHandler(w, req)
-	return w.Result(), nil
 }
