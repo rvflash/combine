@@ -15,6 +15,13 @@ import (
 	"github.com/rvflash/combine"
 )
 
+func ExampleBox_Open() {
+	box := combine.New("./example/src", "")
+	/// ...
+	http.Handle("/", http.FileServer(box))
+	http.ListenAndServe(":8080", nil)
+}
+
 func ExampleData_NewJS() {
 	// Creates the registry
 	c := combine.New("./example/src", "")
