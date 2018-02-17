@@ -15,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 
+	"fmt"
+
 	"github.com/pkg/errors"
 	"github.com/tdewolff/minify"
 	"github.com/tdewolff/minify/css"
@@ -27,7 +29,38 @@ type asset struct {
 	media []uint32
 }
 
-// Add ...
+// StringCombiner ...
+type StringCombiner interface {
+	fmt.Stringer
+	Combiner
+}
+
+// File ...
+type File interface {
+	Aggregator
+	Tagger
+	StringCombiner
+}
+
+// Aggregator is the interface implemented by asset to add content inside.
+type Aggregator interface {
+	// Add adds a slice of byte as part of the asset.
+	// An error is returned if we fails to deal with it.
+	Add(buf ...[]byte) error
+	// AddFile stores the file names as future part of the asset.
+	// Only checks stats to verify if it exists.
+	// If not, an error is returned.
+	AddFile(name ...string) error
+	// AddString adds each string as part of the asset.
+	// An error is returned if we fails to deal with it.
+	AddString(str ...string) error
+	// AddURL stores the file URLs as future part of the asset.
+	// An error is returned is one URL is invalid.
+	AddURL(url ...string) error
+}
+
+// Add adds a slice of byte as part of the asset.
+// An error is returned if we fails to deal with it.
 func (a *asset) Add(buf ...[]byte) (err error) {
 	for _, buf := range buf {
 		if len(buf) == 0 {
@@ -41,7 +74,9 @@ func (a *asset) Add(buf ...[]byte) (err error) {
 	return
 }
 
-// AddFile ...
+// AddFile stores the file names as future part of the asset.
+// Only checks stats to verify if it exists.
+// If not, an error is returned.
 func (a *asset) AddFile(name ...string) (err error) {
 	for _, name := range name {
 		file := Dir(name)
@@ -60,7 +95,8 @@ func (a *asset) AddFile(name ...string) (err error) {
 	return
 }
 
-// AddString ...
+// AddString adds each string as part of the asset.
+// An error is returned if we fails to deal with it.
 func (a *asset) AddString(s ...string) (err error) {
 	for _, s := range s {
 		if s = strings.TrimSpace(s); s == "" {
@@ -74,7 +110,8 @@ func (a *asset) AddString(s ...string) (err error) {
 	return
 }
 
-// AddURL ...
+// AddURL stores the file URLs as future part of the asset.
+// An error is returned is one URL is invalid.
 func (a *asset) AddURL(rawURL ...string) error {
 	for _, rawURL := range rawURL {
 		if rawURL = strings.TrimSpace(rawURL); rawURL == "" {
@@ -102,7 +139,15 @@ func (a *asset) append(r *raw) (err error) {
 	return
 }
 
-// Combine ...
+// Combiner must be implement to combine minified contents.
+type Combiner interface {
+	// Combine tries to write the result of all combined and minified
+	// parts of the content of the asset to w or returns an error.
+	Combine(w io.Writer) error
+}
+
+// Combine tries to write the result of all combined and minified
+// parts of the content of the asset to w or returns an error.
 func (a *asset) Combine(w io.Writer) error {
 	m, err := newMinify(a.kind)
 	if err != nil {
@@ -170,7 +215,7 @@ func (a *asset) minifyURL(r *raw, m *minify.M, w io.Writer) error {
 	return m.Minify(a.kind, w, resp.Body)
 }
 
-// String ...
+// String implements the fmt.Stinger interface.
 func (a *asset) String() string {
 	if len(a.media) == 0 {
 		return ""
@@ -196,7 +241,13 @@ func (a *asset) String() string {
 	return hash
 }
 
-// Tag ...
+// Tagger must be implemented by an asset to be used in HTML5.
+type Tagger interface {
+	// Tag returns a link as a HTML tag to the asset.
+	Tag(root Dir) string
+}
+
+// Tag returns a link as a HTML tag to the asset.
 func (a *asset) Tag(root Dir) string {
 	var name string
 	if name = a.String(); name == "" {

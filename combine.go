@@ -2,12 +2,15 @@
 // Use of this source code is governed by the MIT License
 // that can be found in the LICENSE file.
 
+// Package combine provides interface to create assets with multiple
+// source of contents and to combine it on the fly.
+// It also provides methods to launch a file server to serve them.
 package combine
 
 import (
 	"errors"
+	"fmt"
 	"hash/fnv"
-	"io"
 	"net"
 	"net/http"
 	"os"
@@ -39,47 +42,11 @@ var (
 	ErrNotFound = errors.New("not found")
 )
 
-// Aggregator ...
-type Aggregator interface {
-	Add(buf ...[]byte) error
-	AddFile(name ...string) error
-	AddString(str ...string) error
-	AddURL(url ...string) error
-}
-
-// Combiner ...
-type Combiner interface {
-	Combine(w io.Writer) error
-}
-
-// Stringer ...
-type Stringer interface {
-	String() string
-}
-
-// StringCombiner ...
-type StringCombiner interface {
-	Combiner
-	Stringer
-}
-
-// Tagger ...
-type Tagger interface {
-	Tag(root Dir) string
-}
-
-// File ...
-type File interface {
-	Aggregator
-	Tagger
-	StringCombiner
-}
-
 // Dir defines the current workspace.
 // An empty Dir is treated as ".".
 type Dir string
 
-// String ...
+// String implements the fmt.Stringer interface.
 func (d Dir) String() string {
 	dir := string(d)
 	if dir == "" {
@@ -88,7 +55,8 @@ func (d Dir) String() string {
 	return filepath.Clean(dir)
 }
 
-// Box ...
+// Box represent a virtual folder to store or retrieve
+// combined and minified assets.
 type Box struct {
 	raw          *rawMap
 	min          *minMap
@@ -97,8 +65,18 @@ type Box struct {
 	buildVersion string
 }
 
-// New ...
-func New(src, dst Dir) *Box {
+type minMap struct {
+	src map[uint32]*Static
+	sync.RWMutex
+}
+
+type rawMap struct {
+	src map[uint32]*raw
+	sync.RWMutex
+}
+
+// NewBox returns a new instance of Box.
+func NewBox(src, dst Dir) *Box {
 	return &Box{
 		raw:          &rawMap{src: make(map[uint32]*raw)},
 		min:          &minMap{src: make(map[uint32]*Static)},
@@ -111,7 +89,7 @@ func New(src, dst Dir) *Box {
 
 // Open implements the http.FileSystem.
 func (b *Box) Open(name string) (http.File, error) {
-	a, err := b.ToAsset(split(name))
+	a, err := b.ToAsset(basename(name))
 	if err != nil {
 		return nil, os.ErrNotExist
 	}
@@ -148,13 +126,7 @@ func (b *Box) append(name string, src StringCombiner, dst *Static) (err error) {
 	return
 }
 
-/*
-func (a *asset) create(name string) error {
-
-}
-*/
-
-func split(name string) (mediaType, hash string) {
+func basename(name string) (mediaType, hash string) {
 	ext := path.Ext(name)
 	switch ext {
 	case ".js":
@@ -172,19 +144,20 @@ func toHash(name, ext string) string {
 	return strings.TrimSuffix(path.Base(name), ext)
 }
 
-// NewCSS ...
+// NewCSS returns a new resource CSS.
 func (b *Box) NewCSS() File {
 	a, _, _ := b.newAsset(CSS)
 	return a
 }
 
-// NewJS ...
+// NewCSS returns a new resource JS.
 func (b *Box) NewJS() File {
 	a, _, _ := b.newAsset(JavaScript)
 	return a
 }
 
-// ToAsset...
+// ToAsset transforms a hash with its media type to a CSS or JS asset.
+// If it fails, an error is returned instead.
 func (b *Box) ToAsset(mediaType, hash string) (File, error) {
 	// Initialization by king of media
 	a, ext, err := b.newAsset(mediaType)
@@ -198,7 +171,7 @@ func (b *Box) ToAsset(mediaType, hash string) (File, error) {
 	}
 	// Defines the number of media inside
 	a.media = make([]uint32, len(keys)-1)
-	// Extracts media keys behind it.
+	// Extracts the media keys behind it.
 	var i uint64
 	var min uint32
 	for k, v := range keys {
@@ -234,7 +207,8 @@ func (b *Box) newAsset(mediaType string) (a *asset, ext string, err error) {
 	return
 }
 
-// UseBuildVersion ...
+// UseBuildVersion overwrites the default buidd version by the given value.
+// This build ID prevents unwanted browser caching after changing of the asset.
 func (b *Box) UseBuildVersion(value string) *Box {
 	b.buildVersion = value
 	return b
@@ -245,7 +219,7 @@ type HTTPGetter interface {
 	Get(url string) (*http.Response, error)
 }
 
-// UseHTTPClient ...
+// UseHTTPClient allows to use your own HTTP client or proxy.
 func (b *Box) UseHTTPClient(client HTTPGetter) *Box {
 	b.http = client
 	return b
@@ -269,14 +243,14 @@ func newHTTPClient() HTTPGetter {
 	}
 }
 
-// Static ...
+// Static represents the minified and combined version of the asset.
 type Static struct {
 	Link string
 	sync.WaitGroup
 }
 
 // Delete deletes the value for a key.
-func (b *Box) Delete(key Stringer) {
+func (b *Box) Delete(key fmt.Stringer) {
 	id, err := crc32([]byte(key.String()))
 	if err != nil {
 		return
@@ -286,26 +260,24 @@ func (b *Box) Delete(key Stringer) {
 	b.min.Unlock()
 }
 
-// Load returns the value stored in the map for a key, or nil if no
-// value is present.
+// Load returns the value stored in the map for a key,
+// or nil if no value is present.
 // The ok result indicates whether value was found in the map.
-func (b *Box) Load(key Stringer) (value *Static, ok bool) {
+func (b *Box) Load(key fmt.Stringer) (value *Static, ok bool) {
 	id, err := crc32([]byte(key.String()))
 	if err != nil {
 		return
 	}
-	defer b.min.Unlock()
-	b.min.Lock()
-	if value, ok = b.min.src[id]; ok {
-		return
-	}
-	return nil, false
+	b.min.RLock()
+	value, ok = b.min.src[id]
+	b.min.RUnlock()
+	return
 }
 
 // LoadOrStore returns the existing value for the key if present.
 // Otherwise, it stores and returns the given value.
 // The loaded result is true if the value was loaded, false if stored.
-func (b *Box) LoadOrStore(key Stringer, value *Static) (actual *Static, loaded bool) {
+func (b *Box) LoadOrStore(key fmt.Stringer, value *Static) (actual *Static, loaded bool) {
 	actual, loaded = b.Load(key)
 	if loaded {
 		actual.Wait()
@@ -315,7 +287,7 @@ func (b *Box) LoadOrStore(key Stringer, value *Static) (actual *Static, loaded b
 }
 
 // Store sets the path for the given identifier.
-func (b *Box) Store(key Stringer, value *Static) {
+func (b *Box) Store(key fmt.Stringer, value *Static) {
 	id, err := crc32([]byte(key.String()))
 	if err != nil {
 		return
@@ -325,23 +297,11 @@ func (b *Box) Store(key Stringer, value *Static) {
 	b.min.Unlock()
 }
 
-type minMap struct {
-	src map[uint32]*Static
-	sync.Mutex
-}
-
-type rawMap struct {
-	src map[uint32]*raw
-	sync.Mutex
-}
-
 func (b *Box) loadRaw(key uint32) (value *raw, ok bool) {
-	defer b.raw.Unlock()
-	b.raw.Lock()
-	if value, ok = b.raw.src[key]; ok {
-		return
-	}
-	return nil, false
+	b.raw.RLock()
+	value, ok = b.raw.src[key]
+	b.raw.RUnlock()
+	return
 }
 
 func (b *Box) storeRaw(key uint32, value *raw) {

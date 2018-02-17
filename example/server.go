@@ -12,7 +12,7 @@ import (
 	"github.com/rvflash/combine"
 )
 
-var static = combine.New("")
+var static = combine.NewBox("")
 
 func landing(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "Hello world")
