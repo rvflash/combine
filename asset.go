@@ -238,7 +238,10 @@ func (a *asset) String() string {
 		}
 		hash += "." + fUint32(a.media[i]-min)
 	}
-	return hash
+	if a.kind == JavaScript {
+		return hash + ".js"
+	}
+	return hash + ".css"
 }
 
 // Tagger must be implemented by an asset to be used in HTML5.
@@ -259,7 +262,7 @@ func (a *asset) Tag(root Dir) string {
 
 	// HTML5 tag with the relative path of the asset.
 	if a.kind == JavaScript {
-		return `<script src="` + link + `.js"></script>`
+		return `<script src="` + link + `"></script>`
 	}
-	return `<link rel="stylesheet" href="` + link + `.css">`
+	return `<link rel="stylesheet" href="` + link + `">`
 }

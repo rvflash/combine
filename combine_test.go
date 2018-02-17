@@ -5,18 +5,18 @@
 package combine_test
 
 import (
-	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
+	"testing"
+
+	"io/ioutil"
 
 	"github.com/rvflash/combine"
 )
 
 func ExampleBox_Open() {
-	box := combine.New("./example/src", "")
+	box := combine.NewBox("./example/src", "")
 	/// ...
 	http.Handle("/", http.FileServer(box))
 	http.ListenAndServe(":8080", nil)
@@ -24,7 +24,7 @@ func ExampleBox_Open() {
 
 func ExampleData_NewJS() {
 	// Creates the registry
-	c := combine.New("./example/src", "")
+	c := combine.NewBox("./example/src", "")
 	// Disables the build version to avoid variance.
 	c.UseBuildVersion("")
 
@@ -56,30 +56,40 @@ func ExampleData_NewJS() {
 	// Output: <script src="/883963153.0.1831620815.718850705.1931138922.3355474073.js"></script>
 }
 
-var errNoTransport = errors.New("no transport")
+func TestNew(t *testing.T) {
+	// Creates the registry
+	c := combine.NewBox("./example/src", "./example/combine")
+	// Creates a HTTP test server.
+	ts := httptest.NewServer(http.FileServer(c))
+	defer ts.Close()
 
-// Builds a fake http client by mocking main methods.
-type fakeHTTPClient struct{}
+	js := c.NewJS()
+	if err := js.AddString("var a = 56;"); err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
 
-// Get mocks the method of same name of the http package.
-func (c *fakeHTTPClient) Get(url string) (*http.Response, error) {
-	if !strings.HasPrefix(url, "http") {
-		return nil, errNoTransport
+	var dt = []struct {
+		path,
+		body string
+		statusCode int
+	}{
+		{body: "404 page not found\n", statusCode: 404},
+		{path: "2925958264.0.js", statusCode: 200},
+		{path: "2925958264.0.js", statusCode: 200},
 	}
-	// Mocks responses base on the URL.
-	urlHandler := func(w http.ResponseWriter, r *http.Request) {
-		p := r.URL.Path
-		if p == "" {
-			p = "/"
+	for i, tt := range dt {
+		resp, err := http.Get(ts.URL + tt.path)
+		if err != nil {
+			return
 		}
-		switch p {
-		default:
-			w.WriteHeader(http.StatusNotFound)
-			_, _ = io.WriteString(w, `{"success":false,"error":404,"message":"Not Found"}`)
+		if resp.StatusCode != tt.statusCode {
+			t.Errorf("%d . unexpected status code: got:%d exp:%d", i, resp.StatusCode, tt.statusCode)
 		}
+		out, _ := ioutil.ReadAll(resp.Body)
+		if string(out) != tt.body {
+			t.Errorf("%d . unexpected content: got:%q exp:%q", i, out, tt.body)
+		}
+		_ = resp.Body.Close()
 	}
-	req := httptest.NewRequest("GET", url, nil)
-	w := httptest.NewRecorder()
-	urlHandler(w, req)
-	return w.Result(), nil
+
 }
