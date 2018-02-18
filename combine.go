@@ -89,10 +89,12 @@ func NewBox(src, dst Dir) *Box {
 
 // Open implements the http.FileSystem.
 func (b *Box) Open(name string) (http.File, error) {
+	// Transforms the file name to an asset
 	a, err := b.ToAsset(basename(name))
 	if err != nil {
 		return nil, os.ErrNotExist
 	}
+	// Tries to retrieve it if exists.
 	d, found := b.LoadOrStore(a, &Static{})
 	if found {
 		return os.Open(d.Link)
@@ -103,6 +105,18 @@ func (b *Box) Open(name string) (http.File, error) {
 		return nil, os.ErrPermission
 	}
 	return os.Open(d.Link)
+}
+
+// Close cleans it workspace by removing cache files.
+// It implements the io.Closer interface.
+func (b *Box) Close() error {
+	b.min.Lock()
+	defer b.min.Unlock()
+
+	for i, s := range b.min.src {
+		fmt.Printf("%d. %s\n", i, s)
+	}
+	return nil
 }
 
 func (b *Box) append(name string, src StringCombiner, dst *Static) (err error) {
@@ -130,13 +144,13 @@ func basename(name string) (mediaType, hash string) {
 	ext := path.Ext(name)
 	switch ext {
 	case ".js":
-		mediaType = CSS
-	case ".css":
 		mediaType = JavaScript
+	case ".css":
+		mediaType = CSS
 	default:
 		return
 	}
-	hash = toHash(hash, ext)
+	hash = toHash(name, ext)
 	return
 }
 

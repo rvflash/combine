@@ -59,6 +59,7 @@ func ExampleData_NewJS() {
 func TestNew(t *testing.T) {
 	// Creates the registry
 	c := combine.NewBox("./example/src", "./example/combine")
+	defer func() { _ = c.Close() }()
 	// Creates a HTTP test server.
 	ts := httptest.NewServer(http.FileServer(c))
 	defer ts.Close()
@@ -74,8 +75,8 @@ func TestNew(t *testing.T) {
 		statusCode int
 	}{
 		{body: "404 page not found\n", statusCode: 404},
-		{path: "2925958264.0.js", statusCode: 200},
-		{path: "2925958264.0.js", statusCode: 200},
+		{path: "/2925958264.0.js", body: "var a=56;", statusCode: 200},
+		{path: "/2925958264.0.js", body: "var a=56;", statusCode: 200},
 	}
 	for i, tt := range dt {
 		resp, err := http.Get(ts.URL + tt.path)
