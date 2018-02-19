@@ -14,6 +14,8 @@ It combines and minifies them on the fly on the first demand on the dedicated fi
 
 ```bash
 $ go get github.com/rvflash/combine
+$ cd $GOPATH/src/github.com/rvflash/combine
+$ dep ensure
 ```
 
 ### Usage
