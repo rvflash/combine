@@ -87,6 +87,22 @@ func NewBox(src, dst Dir) *Box {
 	}
 }
 
+// Close cleans it workspace by removing cache files.
+// It implements the io.Closer interface.
+func (b *Box) Close() (err error) {
+	b.min.Lock()
+	defer b.min.Unlock()
+
+	for _, s := range b.min.src {
+		if name := s.Link; name != "" {
+			if err = os.Remove(name); err != nil {
+				return err
+			}
+		}
+	}
+	return
+}
+
 // Open implements the http.FileSystem.
 func (b *Box) Open(name string) (http.File, error) {
 	// Transforms the file name to an asset
@@ -105,18 +121,6 @@ func (b *Box) Open(name string) (http.File, error) {
 		return nil, os.ErrPermission
 	}
 	return os.Open(d.Link)
-}
-
-// Close cleans it workspace by removing cache files.
-// It implements the io.Closer interface.
-func (b *Box) Close() error {
-	b.min.Lock()
-	defer b.min.Unlock()
-
-	for i, s := range b.min.src {
-		fmt.Printf("%d. %s\n", i, s)
-	}
-	return nil
 }
 
 func (b *Box) append(name string, src StringCombiner, dst *Static) (err error) {
@@ -203,9 +207,9 @@ func (b *Box) ToAsset(mediaType, hash string) (File, error) {
 
 func (b *Box) newAsset(mediaType string) (a *asset, ext string, err error) {
 	switch mediaType {
-	case CSS:
-		ext = ".js"
 	case JavaScript:
+		ext = ".js"
+	case CSS:
 		ext = ".css"
 	default:
 		err = ErrMime
@@ -297,7 +301,9 @@ func (b *Box) LoadOrStore(key fmt.Stringer, value *Static) (actual *Static, load
 		actual.Wait()
 		return
 	}
-	return value, false
+	b.Store(key, value)
+	actual, loaded = value, false
+	return
 }
 
 // Store sets the path for the given identifier.

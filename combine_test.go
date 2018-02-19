@@ -6,17 +6,17 @@ package combine_test
 
 import (
 	"fmt"
+	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
 	"testing"
-
-	"io/ioutil"
 
 	"github.com/rvflash/combine"
 )
 
 func ExampleBox_Open() {
 	box := combine.NewBox("./example/src", "")
+	defer func() { _ = box.Close() }()
 	/// ...
 	http.Handle("/", http.FileServer(box))
 	http.ListenAndServe(":8080", nil)

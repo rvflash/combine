@@ -6,6 +6,7 @@ package combine
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -14,8 +15,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-
-	"fmt"
 
 	"github.com/pkg/errors"
 	"github.com/tdewolff/minify"

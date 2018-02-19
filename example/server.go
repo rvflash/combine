@@ -12,15 +12,29 @@ import (
 	"github.com/rvflash/combine"
 )
 
-var static = combine.NewBox("")
+var static = combine.NewBox("./src", "./combine")
 
 func landing(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintf(w, "Hello world")
+	// Just a sample of combined asset.
+	css := static.NewCSS()
+	_ = css.AddURL("https://raw.githubusercontent.com/twbs/bootstrap/v4-dev/dist/css/bootstrap-reboot.css")
+	_ = css.AddString(".blue{ color: #4286f4; }")
+
+	w.WriteHeader(200)
+	fmt.Fprintf(w, `<!doctype HTML>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+%s
+<title>Combine sample</title>
+<div>
+	<h1 class="blue">Hello word</h1>
+</div>
+`, css.Tag("/min/"))
 }
 
 func main() {
-	http.Handle("/static/", static.FileServer(""))
 	http.HandleFunc("/", landing)
+	http.Handle("/min/", http.FileServer(static))
 	err := http.ListenAndServe(":6060", nil)
 	if err != nil {
 		log.Fatal("ListenAndServe: ", err)
