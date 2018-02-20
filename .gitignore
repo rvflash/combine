@@ -1,3 +1,4 @@
 example/example
-example/combine/*
+example/combine/*.js
+example/combine/*.css
 **vendor/

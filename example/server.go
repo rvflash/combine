@@ -9,8 +9,6 @@ import (
 	"log"
 	"net/http"
 
-	"os"
-
 	"github.com/rvflash/combine"
 )
 
@@ -35,17 +33,10 @@ func landing(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	// Creates the environment.
-	if err := os.Mkdir("./combine", os.ModePerm); err != nil {
-		if !os.IsExist(err) {
-			log.Fatal(err)
-		}
-	}
 	// Launches the HTTP server.
 	http.HandleFunc("/", landing)
 	http.Handle("/min/", http.FileServer(static))
-	err := http.ListenAndServe(":6060", nil)
-	if err != nil {
+	if err := http.ListenAndServe(":6060", nil); err != nil {
 		log.Fatal("ListenAndServe: ", err)
 	}
 }
