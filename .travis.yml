@@ -4,7 +4,6 @@ go:
   - 1.9
 
 before_install:
-  - chmod 0777 example/combine
   - go get -u github.com/golang/dep/cmd/dep
   - dep ensure
 
