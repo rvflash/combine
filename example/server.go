@@ -12,11 +12,13 @@ import (
 	"github.com/rvflash/combine"
 )
 
-var static = combine.NewBox("./src", "./combine")
+type homeHandler struct {
+	static *combine.Box
+}
 
-func landing(w http.ResponseWriter, r *http.Request) {
+func (p *homeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Just a sample of combined asset.
-	css := static.NewCSS()
+	css := p.static.NewCSS()
 	_ = css.AddURL("https://raw.githubusercontent.com/twbs/bootstrap/v4-dev/dist/css/bootstrap-reboot.css")
 	_ = css.AddString(".blue{ color: #4286f4; }")
 
@@ -33,8 +35,13 @@ func landing(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+
+	// Creates the box.
+	static := combine.NewBox("./src", "./combine")
+	defer func() { _ = static.Close() }()
+
 	// Launches the HTTP server.
-	http.HandleFunc("/", landing)
+	http.Handle("/", &homeHandler{static})
 	http.Handle("/min/", http.FileServer(static))
 	if err := http.ListenAndServe(":6060", nil); err != nil {
 		log.Fatal("ListenAndServe: ", err)

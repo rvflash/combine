@@ -27,9 +27,9 @@ import "github.com/rvflash/combine"
 // ...
 // Creates a box with the path to the local file resources
 // and the path to store combined / minified assets.
-box := combine.NewBox("./src", "./combine")
+static := combine.NewBox("./src", "./combine")
 // Deletes all files cache on exit. 
-defer func() { _ = box.Close() }()
+defer func() { _ = static.Close() }()
 // ...
 // Creates a asset.
 css := static.NewCSS()
@@ -41,6 +41,6 @@ _ = css.AddFile("local/file/is_src_dir.css")
 tag := css.Tag("/static/")
 // ...
 // Serves combined and minifed resousrces
-http.Handle("/static/", http.FileServer(box))
+http.Handle("/static/", http.FileServer(static))
 http.ListenAndServe(":8080", nil)
 ```
