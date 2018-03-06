@@ -245,23 +245,31 @@ func (a *asset) String() string {
 
 // Tagger must be implemented by an asset to be used in HTML5.
 type Tagger interface {
+	// URL returns the relative path of the asset.
+	Path(root Dir) string
 	// Tag returns a link as a HTML tag to the asset.
 	Tag(root Dir) string
 }
 
-// Tag returns a link as a HTML tag to the asset.
-func (a *asset) Tag(root Dir) string {
-	var name string
-	if name = a.String(); name == "" {
+// Path returns the relative path of the asset.
+func (a *asset) Path(root Dir) string {
+	name := a.String()
+	if name == "" {
 		return ""
 	}
 	// Path with src directory, a build version to force browser
 	// to clear its cache, its filename and extension.
-	link := path.Join("/", root.String(), a.reg.buildVersion, name)
+	return path.Join("/", root.String(), a.reg.buildVersion, name)
+}
 
-	// HTML5 tag with the relative path of the asset.
-	if a.kind == JavaScript {
-		return `<script src="` + link + `"></script>`
+// Tag returns a link as a HTML tag to the asset.
+func (a *asset) Tag(root Dir) string {
+	rel := a.Path(root)
+	if rel == "" {
+		return ""
 	}
-	return `<link rel="stylesheet" href="` + link + `">`
+	if a.kind == JavaScript {
+		return `<script src="` + rel + `"></script>`
+	}
+	return `<link rel="stylesheet" href="` + rel + `">`
 }
