@@ -283,8 +283,9 @@ func (a *asset) SrcTags(root Dir, stripPrefix ...string) string {
 		if src.kind == fileSrc {
 			// Local link to the resource. We need to manage access
 			// to this static with possibly an other relative path.
+			s = filePathToPath(s)
 			for _, prefix := range stripPrefix {
-				s = strings.TrimPrefix(s, prefix)
+				s = strings.TrimPrefix(s, filePathToPath(prefix))
 			}
 			s = path.Join("/", s)
 		}
@@ -292,6 +293,15 @@ func (a *asset) SrcTags(root Dir, stripPrefix ...string) string {
 	}
 	a.reg.raw.RUnlock()
 	return strings.Join(tags, "\n")
+}
+
+// Converts file path to URL path.
+func filePathToPath(s string) string {
+	if filepath.Separator == '/' {
+		// nothing to do
+		return s
+	}
+	return strings.Join(strings.Split(s, string(filepath.Separator)), "/")
 }
 
 // Tag returns a HTML5 tag to link to the minified and combined version of the asset.
