@@ -245,31 +245,75 @@ func (a *asset) String() string {
 
 // Tagger must be implemented by an asset to be used in HTML5.
 type Tagger interface {
-	// URL returns the relative path of the asset.
+	// Path returns the relative path to the asset
 	Path(root Dir) string
-	// Tag returns a link as a HTML tag to the asset.
+	// Tag returns the tag to link to the minified and combined version of the asset.
 	Tag(root Dir) string
+	// SrcTags returns all original resources in HTML5 tags.
+	SrcTags(root Dir, stripPrefix ...string) string
 }
 
-// Path returns the relative path of the asset.
+// Path returns the relative path to the asset including the root directory
+// and the current build version as "folder".
+// The build version is dedicated to force browser to clear its cache.
+// After this prefixes, comes the file name and the extension.
 func (a *asset) Path(root Dir) string {
 	name := a.String()
 	if name == "" {
 		return ""
 	}
-	// Path with src directory, a build version to force browser
-	// to clear its cache, its filename and extension.
 	return path.Join("/", root.String(), a.reg.buildVersion, name)
 }
 
-// Tag returns a link as a HTML tag to the asset.
+// SrcTags returns all original resources in HTML5 tags.
+// It purposes only to be used on a development server.
+// The root directory allow to uses an other static handler.
+// The list of optional stripPrefix offers means to remove
+// the given prefixes in the asset file path.
+func (a *asset) SrcTags(root Dir, stripPrefix ...string) string {
+	var (
+		s    string
+		src  *raw
+		tags []string
+	)
+	a.reg.raw.RLock()
+	for _, key := range a.media {
+		src = a.reg.raw.src[key]
+		s = string(src.buf)
+		if src.kind == fileSrc {
+			// Local link to the resource. We need to manage access
+			// to this static with possibly an other relative path.
+			for _, prefix := range stripPrefix {
+				s = strings.TrimPrefix(s, prefix)
+			}
+			s = path.Join("/", s)
+		}
+		tags = append(tags, htmlTag(a.kind, s, src.kind == inlineSrc))
+	}
+	a.reg.raw.RUnlock()
+	return strings.Join(tags, "\n")
+}
+
+// Tag returns a HTML5 tag to link to the minified and combined version of the asset.
 func (a *asset) Tag(root Dir) string {
-	rel := a.Path(root)
-	if rel == "" {
+	s := a.Path(root)
+	if s == "" {
 		return ""
 	}
-	if a.kind == JavaScript {
-		return `<script src="` + rel + `"></script>`
+	return htmlTag(a.kind, s, false)
+}
+
+func htmlTag(kind, text string, inline bool) string {
+	// Returns a HTML5 JS tag.
+	if kind == JavaScript {
+		if inline {
+			return `<script>` + text + `</script>`
+		}
+		return `<script src="` + text + `"></script>`
 	}
-	return `<link rel="stylesheet" href="` + rel + `">`
+	// Returns a HTML5 CSS tag.
+	if inline {
+		return `<style>` + text + `"</style>`
+	}
+	return `<link rel="stylesheet" href="` + text + `">`
 }
