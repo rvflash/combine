@@ -262,7 +262,7 @@ func (a *asset) Path(root Dir) string {
 	if name == "" {
 		return ""
 	}
-	return path.Join("/", root.String(), a.reg.buildVersion, name)
+	return path.Join("/", filePathToPath(root.String()), a.reg.buildVersion, name)
 }
 
 // SrcTags returns all original resources in HTML5 tags.
@@ -295,10 +295,10 @@ func (a *asset) SrcTags(root Dir, stripPrefix ...string) string {
 	return strings.Join(tags, "\n")
 }
 
-// Converts file path to URL path.
+// Converts a file path to an URL path.
 func filePathToPath(s string) string {
 	if filepath.Separator == '/' {
-		// nothing to do
+		// nothing to do, it's the same separator in an URL.
 		return s
 	}
 	return strings.Join(strings.Split(s, string(filepath.Separator)), "/")
