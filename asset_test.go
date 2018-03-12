@@ -243,3 +243,19 @@ func TestAsset_SrcTags(t *testing.T) {
 		t.Errorf("mismatch content: got:%q exp:%q", out, exp)
 	}
 }
+
+func TestAsset_Link(t *testing.T) {
+	// Creates the registry
+	c := combine.NewBox("./example/src", "")
+	// Disables the build version to avoid variance.
+	c.UseBuildVersion("")
+
+	js := c.NewJS()
+	if err := js.AddFile("f1.js", "f2.js"); err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+	exp := "</static/883963153.0.1831620815.js>; rel=preload; as=script"
+	if out := js.Link("/static/"); out != exp {
+		t.Errorf("mismatch content: got:%q exp:%q", out, exp)
+	}
+}
