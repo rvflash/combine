@@ -245,12 +245,22 @@ func (a *asset) String() string {
 
 // Tagger must be implemented by an asset to be used in HTML5.
 type Tagger interface {
+	// Link returns the Link HTTP response header to preload the asset.
+	Link(root Dir) string
 	// Path returns the relative path to the asset
 	Path(root Dir) string
 	// Tag returns the tag to link to the minified and combined version of the asset.
 	Tag(root Dir) string
 	// SrcTags returns all original resources in HTML5 tags.
 	SrcTags(root Dir, stripPrefix ...string) string
+}
+
+// Link returns the Link HTTP response header to preload the asset.
+func (a *asset) Link(root Dir) string {
+	if a.kind == JavaScript {
+		return "<" + a.Path(root) + ">; rel=preload; as=script"
+	}
+	return "<" + a.Path(root) + ">; rel=preload; as=style"
 }
 
 // Path returns the relative path to the asset including the root directory
